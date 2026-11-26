@@ -75,7 +75,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                       <strong className="font-extrabold text-[12px] block text-emerald-700 dark:text-emerald-400 uppercase tracking-wide font-mono mb-0.5">
                         First Completed Case Saved!
                       </strong>
-                      "You just saved 15 minutes on that case. Help ErMate get even better for the next doctor."
+                      Your first case is saved. You can help ErMate improve for the next doctor, if you choose to.
                     </div>
                   </div>
                 )}
@@ -119,10 +119,10 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                     </div>
                     <div>
                       <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wide font-mono">
-                        Identity Anonymisation
+                        Identity Protection
                       </h4>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5 font-sans">
-                        Patient identity is never stored. Only clinical content — symptoms, vitals, diagnoses. Fully anonymised.
+                        ErMate does not ask for patient names. Identifying details are removed automatically before learning use, but automatic removal cannot be guaranteed perfect, so please avoid entering identifiers.
                       </p>
                     </div>
                   </div>
@@ -134,10 +134,10 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                     </div>
                     <div>
                       <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wide font-mono">
-                        Sovereign Indian Data
+                        Where Data Is Kept
                       </h4>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5 font-sans">
-                        Your data stays in India. Google Cloud, Mumbai. Never shared externally.
+                        Stored on Google Cloud, Mumbai, India. Some AI processing is done by providers outside India on de-identified text.
                       </p>
                     </div>
                   </div>
@@ -231,10 +231,8 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                         ❌ What ErMate Never Collects
                       </h4>
                       <ul className="space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300 list-disc pl-4 font-sans">
-                        <li>Patient name</li>
-                        <li>Patient age (removed)</li>
+                        <li>Patient name (not requested)</li>
                         <li>Patient address or contact</li>
-                        <li>Your personal cases (only anonymised patterns)</li>
                         <li>Any billing information</li>
                       </ul>
                     </div>
@@ -258,7 +256,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                       Who Sees It
                     </h4>
                     <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
-                      Nobody. It's used only to train AI models inside ErMate. Never sold. Never shared. Never given to any third party.
+                      Only ErMate's team and the service providers needed to process it (listed in the Privacy Policy). It is never sold and never used for advertising.
                     </p>
                   </div>
 
@@ -268,7 +266,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                       Where It's Stored
                     </h4>
                     <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
-                      Google Cloud Storage, Mumbai, India (asia-south1). Encrypted at rest and in transit. Only authorized healthcare facility personnel have access.
+                      Google Cloud, Mumbai, India (asia-south1), encrypted at rest and in transit. Access is limited to authorised ErMate staff and the processors named in the Privacy Policy.
                     </p>
                   </div>
 
@@ -279,7 +277,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                     </h4>
                     <ul className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300 list-disc pl-4 font-sans">
                       <li>Turn off anytime in Settings</li>
-                      <li>Request deletion by emailing <span className="font-mono underline">support@ermate.app</span></li>
+                      <li>Request deletion by emailing <span className="font-mono underline">support@ermate.in</span></li>
                       <li>Your existing cases are unaffected</li>
                     </ul>
                   </div>

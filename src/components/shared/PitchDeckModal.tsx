@@ -16,7 +16,7 @@ export const SLIDES_DATA = [
     subtitle: "The Emergency Medicine AI Operating System & Intelligent EMR",
     body: "Empowering acute care physicians, eliminating documentation fatigue, and safeguarding patient lives with zero-hallucination, privacy-first clinical AI.",
     pillars: [
-      { title: "DPDP Act 2023 Compliant", desc: "Local On-The-Fly PHI Scrubbing" },
+      { title: "Privacy by Design", desc: "Automatic Patient-Identifier Removal" },
       { title: "Voice-First Scribe", desc: "Multilingual Acute Dictation" },
       { title: "Zero Fabrication", desc: "Deterministic Clinical Rules" },
       { title: "Offline-Resilient", desc: "Mission-Critical PWA Engine" },
@@ -74,10 +74,10 @@ export const SLIDES_DATA = [
   },
   {
     category: "PROPRIETARY ADVANTAGE",
-    title: "Clinical Integrity & DPDP 2023 Compliance Architecture",
+    title: "Clinical Integrity & Data Protection Architecture",
     pillarsList: [
       {
-        title: "1. DPDP Act 2023 On-The-Fly PHI Scrubbing",
+        title: "1. Automatic Patient-Identifier Removal",
         desc: "Local server-side stripping masks patient names, UHIDs, phone numbers, and Aadhaar before touching LLMs. Calendar dates become relative anchors ([Day 1], [Day 2]) preserving trajectory without storing calendar PHI."
       },
       {
@@ -111,7 +111,7 @@ export const SLIDES_DATA = [
     title: "Delivering Transformational Clinical & Financial Impact",
     metrics: [
       { stat: "65%", label: "Faster Documentation", sub: "Handover prep reduced from 45 min to under 3 min per shift." },
-      { stat: "100%", label: "DPDP 2023 Compliance", sub: "Zero PHI leaves domestic servers; zero risk of regulatory penalties." },
+      { stat: "Mumbai", label: "Data Region", sub: "Records stored on Google Cloud, Mumbai; text is de-identified before AI processing." },
       { stat: "0", label: "Hallucinated Fields", sub: "Missing vitals remain unstated; anti-fabrication guards enforce clinical truth." },
       { stat: "3 hrs", label: "Saved per Doctor / Shift", sub: "Physicians reinvest saved time into acute bedside resuscitations." }
     ]

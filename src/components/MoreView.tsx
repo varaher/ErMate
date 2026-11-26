@@ -542,7 +542,7 @@ export default function MoreView({
               <div className="text-left">
                 <strong className="text-sm font-bold text-slate-900 dark:text-white block">Privacy & Data Controls</strong>
                 <span className="text-xs text-slate-500 dark:text-slate-400 block mt-0.5">
-                  DPDP Act 2023 compliant • Local cache encryption • Advanced record management
+                  Your data and privacy • Delete account • Record management
                 </span>
               </div>
             </div>
@@ -1246,7 +1246,7 @@ export default function MoreView({
 
       {/* FOOTER */}
       <div className="text-center pt-2 font-mono text-[11px] text-slate-400 space-y-2">
-        <p>ErMate v{APP_VERSION} • Certified ATLS Protocol Engine • DPDP Act 2023 Compliant • End-to-End Encrypted</p>
+        <p>ErMate v{APP_VERSION} • Certified ATLS Protocol Engine • Data stored in Mumbai, India • Encrypted in transit</p>
         <LegalLinks />
       </div>
 
@@ -1564,10 +1564,10 @@ export default function MoreView({
               <div className="p-3.5 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 rounded-2xl space-y-1.5">
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                  <strong className="text-slate-900 dark:text-white">DPDP Act 2023 & ABDM Compliance</strong>
+                  <strong className="text-slate-900 dark:text-white">Data protection (DPDP Act 2023)</strong>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                  All clinical reasoning executes on server-side de-identified streams. Direct identifiers (names, UHIDs, phone numbers, aadhaar) are never transmitted to overseas model inference endpoints.
+                  Clinical text is automatically de-identified on the server (names, UHIDs, phone numbers and Aadhaar numbers are removed by pattern matching) before it is sent to AI models, some of which run outside India. Automatic removal reduces, but cannot guarantee, that no identifier remains. Voice recordings go to Sarvam AI as recorded.
                 </p>
               </div>
 
@@ -1763,8 +1763,8 @@ export default function MoreView({
               </p>
               <div className="space-y-1.5 font-mono text-[11px] pt-1">
                 <p>• ATLS 10th Edition Clinical Architecture</p>
-                <p>• DPDP Act 2023 Server-Side De-identification</p>
-                <p>• Local AES Encrypted Persistence</p>
+                <p>• Automatic de-identification before AI processing</p>
+                <p>• Data stored in Mumbai, India</p>
                 <p>• Monotonic Sequence Case Identity Counter</p>
               </div>
             </div>

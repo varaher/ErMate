@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import LegalLinks from "./LegalLinks";
+import TermsGate from "./TermsGate";
+import { TERMS_VERSION } from "../lib/legal";
 
 import {
   Activity,
@@ -22,7 +24,8 @@ import {
 
 import {
   doc,
-  getDoc
+  getDoc,
+  updateDoc
 } from "firebase/firestore";
 
 import {
@@ -158,6 +161,10 @@ export default function MockLoginView({
   const [busy, setBusy] =
     useState(false);
 
+  /* Terms gate: set when the signed-in account has not accepted the current Terms and Privacy Policy. */
+  const [pendingTerms, setPendingTerms] =
+    useState<UserProfile | null>(null);
+
   const isEmerald =
     theme === "emerald";
 
@@ -285,10 +292,39 @@ export default function MockLoginView({
           user.displayName
         );
 
+      if (profile.termsVersion !== TERMS_VERSION) {
+        setPendingTerms(profile);
+        return;
+      }
+
       onLogin(
         profile
       );
     };
+
+  const acceptTerms = async () => {
+    const p = pendingTerms;
+    const user = auth.currentUser;
+    if (!p || !user) return;
+    setBusy(true);
+    const stamp = {
+      termsAcceptedAt: new Date().toISOString(),
+      termsVersion: TERMS_VERSION,
+    };
+    try {
+      // An account without a saved profile yet carries the acceptance in the profile the app creates.
+      await updateDoc(doc(db, "users", user.uid), stamp).catch(() => undefined);
+    } finally {
+      setBusy(false);
+      setPendingTerms(null);
+      onLogin({ ...p, ...stamp });
+    }
+  };
+
+  const declineTerms = async () => {
+    setPendingTerms(null);
+    await signOut(auth).catch(() => undefined);
+  };
 
 
   /**
@@ -517,6 +553,10 @@ export default function MockLoginView({
 
 
   return (
+    <>
+    {pendingTerms && (
+      <TermsGate onAccept={acceptTerms} onDecline={declineTerms} busy={busy} />
+    )}
     <div
       className={`flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans ${
         isEmerald
@@ -784,5 +824,6 @@ export default function MockLoginView({
         <LegalLinks />
       </div>
     </div>
+    </>
   );
 }

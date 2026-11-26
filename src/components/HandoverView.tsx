@@ -3072,7 +3072,7 @@ function extractLatestVitalsWithTime(
               <span className="text-lg leading-none">🛡️</span>
               <div>
                 <div className="font-extrabold text-[11.5px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
-                  DPDP Act 2023 Compliant De-identification Active
+                  Automatic de-identification active
                 </div>
                 <div className="text-[11px] text-emerald-700 dark:text-emerald-200 mt-0.5 font-sans">
                   Stripped <strong>{phiShieldInfo.count} patient identifier(s)</strong> ({phiShieldInfo.details?.names || 0} names, {phiShieldInfo.details?.ids || 0} hospital IDs, {phiShieldInfo.details?.dates || 0} dates) on Indian Cloud Run server before AI processing.
