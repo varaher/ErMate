@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from "react";
 import { X, Copy, Check, ChevronUp, ChevronDown, Settings2, RotateCcw, ArrowRight, FileText, ListChecks } from "lucide-react";
 import type { CaseSheetData } from "./CaseSheetPrintView";
-import { formatCaseSheetText, formatCaseSheetHtml } from "../utils/caseSheetFormat";
+import { formatCaseSheetText, formatCaseSheetHtml, caseSheetTextToEmrHtml } from "../utils/caseSheetFormat";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import {
   buildEmrSections, EMR_SECTION_CATALOG, loadEmrLayout, saveEmrLayout, resetEmrLayout,
   type EmrLayoutItem, type EmrSectionKey,
 } from "../utils/emrSections";
+import { deriveEmrLayout, isDefaultWritingStyle, restyleDocument, restyleSection } from "../lib/writingStyle";
+import { useWritingStyle } from "../lib/writingStyleBackend";
 
 /**
  * Copy to Hospital EMR — full sheet, or field by field for structured EMR templates.
@@ -23,16 +25,26 @@ const escapeHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;")
 const fieldHtml = (t: string) => `<meta charset="utf-8"><p>${t.split("\n").map(escapeHtml).join("<br>")}</p>`;
 
 export default function CopyToEmrPanel({ data, onClose }: Props) {
-  const [mode, setMode] = useState<"fields" | "full">("fields");
-  const [layout, setLayout] = useState<EmrLayoutItem[]>(() => loadEmrLayout());
+  // "My Writing Style": presentation only (layout, abbreviations, bullets). Default style = unchanged output.
+  const wstyle = useWritingStyle();
+  const [mode, setMode] = useState<"fields" | "full">(wstyle.emrCopy === "full" ? "full" : "fields");
+  const [stored, setStored] = useState<EmrLayoutItem[]>(() => loadEmrLayout());
+  // A layout the doctor saved themselves always wins; otherwise Level of detail / Examination format decide.
+  const layout = useMemo(() => deriveEmrLayout(wstyle, stored), [wstyle, stored]);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<EmrLayoutItem[]>(layout);
+  const [draft, setDraft] = useState<EmrLayoutItem[]>(() => deriveEmrLayout(wstyle, loadEmrLayout()));
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [failedKey, setFailedKey] = useState<string | null>(null);
   const [nextIndex, setNextIndex] = useState(0);
 
-  const sections = useMemo(() => buildEmrSections(data), [data]);
-  const fullText = useMemo(() => formatCaseSheetText(data, { forEmr: true }), [data]);
+  const sections = useMemo(() => {
+    const base = buildEmrSections(data);
+    if (isDefaultWritingStyle(wstyle)) return base;
+    const out = { ...base };
+    (Object.keys(base) as EmrSectionKey[]).forEach((k) => { out[k] = { ...base[k], text: restyleSection(base[k].text, wstyle, k) }; });
+    return out;
+  }, [data, wstyle]);
+  const fullText = useMemo(() => restyleDocument(formatCaseSheetText(data, { forEmr: true }), wstyle), [data, wstyle]);
 
   const items = layout.map((it) => ({ ...it, section: sections[it.key], label: it.label || sections[it.key].title }));
   const copyable = items.filter((it) => it.section.text);
@@ -56,7 +68,7 @@ export default function CopyToEmrPanel({ data, onClose }: Props) {
   };
 
   const copyFull = async () => {
-    const ok = await copyTextToClipboard(fullText, formatCaseSheetHtml(data, { forEmr: true }));
+    const ok = await copyTextToClipboard(fullText, isDefaultWritingStyle(wstyle) ? formatCaseSheetHtml(data, { forEmr: true }) : caseSheetTextToEmrHtml(fullText));
     flash("__full", ok);
   };
 
@@ -201,7 +213,7 @@ export default function CopyToEmrPanel({ data, onClose }: Props) {
           )}
           {mode === "fields" && editing && (
             <>
-              <button type="button" onClick={() => { const d = resetEmrLayout(); setDraft(d); setLayout(d); setNextIndex(0); setEditing(false); }}
+              <button type="button" onClick={() => { const d = resetEmrLayout(); setStored(d); setDraft(deriveEmrLayout(wstyle, d)); setNextIndex(0); setEditing(false); }}
                 className={`${btn} bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300`}>
                 <RotateCcw className="w-3.5 h-3.5" /> Default
               </button>
@@ -210,7 +222,7 @@ export default function CopyToEmrPanel({ data, onClose }: Props) {
                 Cancel
               </button>
               <button type="button" disabled={draft.length === 0}
-                onClick={() => { saveEmrLayout(draft); setLayout(draft); setNextIndex(0); setEditing(false); }}
+                onClick={() => { saveEmrLayout(draft); setStored(draft); setNextIndex(0); setEditing(false); }}
                 className={`${btn} px-4 py-2 bg-indigo-600 border-indigo-600 text-white disabled:opacity-50`}>
                 <Check className="w-4 h-4" /> Save layout
               </button>

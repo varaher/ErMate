@@ -776,6 +776,8 @@ export interface UserProfile {
   onboardingTeamPromptDismissed?: boolean;
   /** Section the doctor works in, chosen at registration. Decides which panel opens on login. */
   workArea?: WorkArea;
+  /** My Writing Style: presentation preferences only, validated by resolveWritingStyle(). Never patient data. */
+  writingStyle?: Record<string, unknown>;
 }
 
 export type WorkArea = "ER" | "ICU" | "OPD";

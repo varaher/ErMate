@@ -1,6 +1,7 @@
 import { missingDischargeItems, mayAiFillDischargeField, type AiDischargeField } from "../mate/mateDischargeIntent";
 import React, { useState, useEffect, useRef } from "react";
 import { formatAgeLong } from "../utils/ageLabel";
+import { IDENTITY_BLANK_LINE } from "../lib/patientIdentity";
 import { InlineEditCtx, EdText, EdBlock, INLINE_EDIT_CSS } from "./InlineEdit";
 import { ConfirmModal } from "./shared/ConfirmModal";
 import { Pencil, ArrowLeft, Sparkles, CheckCircle, Save, RefreshCw, AlertCircle, Printer, ShieldAlert, FileText, Check, AlertTriangle, ListFilter, Copy, Download, ChevronDown, FileCheck, MessageSquare, Trash2 } from "lucide-react";
@@ -34,6 +35,8 @@ import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { withVitalUnit, type VitalKind } from "../utils/vitalUnits";
 import ShareWhatsAppDialog from "./ShareWhatsAppDialog";
 import { dischargeToWhatsApp } from "../utils/whatsappShare";
+import { restyleFields } from "../lib/writingStyle";
+import { useWritingStyle } from "../lib/writingStyleBackend";
 
 interface DischargeSummaryViewProps {
   currentCase: ClinicalCase;
@@ -75,6 +78,9 @@ export default function DischargeSummaryView({
   onApplyPreviewDischarge,
   startInEdit = false
 }: DischargeSummaryViewProps) {
+  // "My Writing Style": applies to the copied / shared summary only (free-text fields). Facts, vitals,
+  // medications and investigation results are never touched. Default style = unchanged text.
+  const wstyle = useWritingStyle();
   // Prepopulate from case records or existing dischargeInfo
   // The same documented primary survey the case sheet shows (adult and paediatric), so nothing dictated is lost here.
   const documentedPs = resolveDocumentedPrimarySurvey(currentCase);
@@ -480,8 +486,15 @@ export default function DischargeSummaryView({
     } : null
   });
 
-  const getFormattedDischargeSummaryText = () => formatDischargeSummaryText(buildDischargeSummaryData());
-  const getFormattedDischargeSummaryHtml = () => formatDischargeSummaryHtml(buildDischargeSummaryData());
+  const styledDischargeData = (): DischargeSummaryData =>
+    restyleFields(
+      buildDischargeSummaryData(),
+      ["presentingComplaints", "historyOfPresentIllness", "pastMedicalHistory", "familyGynaeHistory", "generalExamination", "courseInHospital", "primaryDiagnosis", "secondaryDiagnosis"],
+      wstyle,
+      ["historyOfPresentIllness", "pastMedicalHistory", "courseInHospital", "generalExamination"],
+    );
+  const getFormattedDischargeSummaryText = () => formatDischargeSummaryText(styledDischargeData());
+  const getFormattedDischargeSummaryHtml = () => formatDischargeSummaryHtml(styledDischargeData());
 
   const handleCopyDischargeSummary = async () => {
     // Plain-text flavour must paste cleanly into EMR text boxes: strip markdown bold markers.
@@ -1346,15 +1359,6 @@ export default function DischargeSummaryView({
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="font-bold text-slate-500 uppercase text-[9px]">UHID / CR Number</label>
-                    <input
-                      type="text"
-                      value={uhid}
-                      onChange={(e) => setUhid(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border rounded-lg font-mono font-bold"
-                    />
-                  </div>
-                  <div className="space-y-1">
                     <label className="font-bold text-slate-500 uppercase text-[9px]">Brought By / Informant</label>
                     <input
                       type="text"
@@ -1992,9 +1996,9 @@ export default function DischargeSummaryView({
               </div>
             </div>
 
-  <div><span className="font-bold">PATIENT NAME:</span> {currentCase.patient.name}</div>
+  <div><span className="font-bold">PATIENT NAME:</span> {IDENTITY_BLANK_LINE}</div>
   <div><span className="font-bold">AGE / GENDER:</span> {formatAgeLong(currentCase.patient.age, currentCase.patient.ageMonths)} / {currentCase.patient.gender || "Not documented"}</div>
-  <div><span className="font-bold">UHID / CR NUMBER:</span> <DF k="uhid" v={uhid} /></div>
+  <div><span className="font-bold">UHID / CR NUMBER:</span> {IDENTITY_BLANK_LINE}</div>
 
   {inlineOn ? (
     <div className="mt-4"><span className="font-bold">MLC:</span> <DF k="isMlc" v={isMlc} hint="Yes / No" /> , MLC No- <DF k="mlcNo" v={mlcNo} /></div>

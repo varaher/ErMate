@@ -479,7 +479,10 @@ service cloud.firestore {
         && (!('hospitalLabel' in incoming()) || (incoming().hospitalLabel is string && incoming().hospitalLabel.size() <= 100))
         && (incoming().get('aiCredits', 0) is int)
         && (incoming().get('streak', 0) is int)
-        && (incoming().get('subscriptionTier', '') is string);
+        && (incoming().get('subscriptionTier', '') is string)
+        // My Writing Style: presentation preferences only. A small map, nothing else.
+        && (!('writingStyle' in incoming())
+            || (incoming().writingStyle is map && incoming().writingStyle.size() <= 8));
 
             // ── ICU Mode (Phase 1, personal workspace) ───────────────────────────
       // Owner-only. Team/hospital sharing comes with the workspace resolver in a later phase.

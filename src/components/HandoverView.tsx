@@ -25,6 +25,8 @@ import { db, auth } from "../firebase";
 import { authenticatedFetch } from "../services/authenticatedFetch";
 import { doc, setDoc, getDoc, updateDoc, onSnapshot, arrayRemove, deleteField } from "firebase/firestore";
 import { captureFeedbackCorrection } from "../services/learningClient";
+import { restyleDocument } from "../lib/writingStyle";
+import { useWritingStyle } from "../lib/writingStyleBackend";
 import { displayGcs, displayTemperature, displaySpo2, displayGrbs } from "../utils/clinicalFormatter";
 
 interface HandoverViewProps {
@@ -423,6 +425,10 @@ function HandoverViewInner({
   quickPasteList: propQuickPasteList,
   setQuickPasteList: propSetQuickPasteList
 }: HandoverViewProps) {
+  // "My Writing Style": copied handover text only. Approved abbreviations at most; no restructuring,
+  // and the handover content itself is never changed. Default style = unchanged text.
+  const wstyle = useWritingStyle();
+  const styledCopy = (t: string) => restyleDocument(t, wstyle, { restructure: false });
   // Main view navigation: "registry" (Active Cases) or "quickpaste" (EMR Quick Paste)
   const [localActiveSubTab, setLocalActiveSubTab] = useState<"registry" | "quickpaste">("registry");
   const activeSubTab = propActiveSubTab !== undefined ? propActiveSubTab : localActiveSubTab;
@@ -2578,7 +2584,7 @@ function extractLatestVitalsWithTime(
   };
 
   const handleCopyText = (key: string, text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(styledCopy(text)).then(() => {
       setCopiedState(prev => ({ ...prev, [key]: true }));
       setTimeout(() => {
         setCopiedState(prev => ({ ...prev, [key]: false }));
@@ -3251,7 +3257,7 @@ ${r.alerts ? `━━━━━━━━━━━━━━━━━━━━━━
 
                 const text = `HOSPITAL HANDOVER & TRANSITION LOG\nDate: ${handoverMeta.date} | From: ${handoverMeta.from} | To: ${handoverMeta.to} | Time: ${handoverMeta.time}\n\n` + 
                   editableRows.map(buildFormattedCard).join("\n");
-                navigator.clipboard.writeText(text).then(() => {
+                navigator.clipboard.writeText(styledCopy(text)).then(() => {
                   setCopiedState(prev => ({ ...prev, "sheet_copy": true }));
                   setTimeout(() => setCopiedState(prev => ({ ...prev, "sheet_copy": false })), 2000);
                 });

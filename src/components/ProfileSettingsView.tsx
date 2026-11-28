@@ -19,6 +19,7 @@ import MoreView from "./MoreView";
 import TeamBuilder from "./TeamBuilder";
 import MortalityAuditModal from "./MortalityAuditModal";
 import { SelfLearningRulesPanel } from "./SelfLearningRulesPanel";
+import WritingStyleSettings from "./WritingStyleSettings";
 import RoleChangeSection from "./RoleChangeSection";
 import { auth, db } from "../firebase";
 import { collection, query, onSnapshot } from "firebase/firestore";
@@ -1248,6 +1249,25 @@ export default function ProfileSettingsView({
             </div>
 
             <div 
+              onClick={() => setSelectedSubSection("writing-style")}
+              className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
+              data-testid="menu-writing-style"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8.5 h-8.5 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                  <FileText className="w-4.5 h-4.5" />
+                </div>
+                <div className="text-left">
+                  <strong className="text-sm font-bold block">My Writing Style</strong>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
+                    How your copied notes and summaries are laid out
+                  </span>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+            </div>
+
+            <div 
               onClick={() => setSelectedSubSection("security")}
               className="p-4 flex items-center justify-between gap-3 cursor-pointer text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-all"
             >
@@ -2026,6 +2046,9 @@ export default function ProfileSettingsView({
           />
         </div>
       );
+    } else if (selectedSubSection === "writing-style") {
+      title = "My Writing Style";
+      content = <WritingStyleSettings />;
     } else if (selectedSubSection === "facility") {
       title = "Hospital & ER Setup";
       content = (
