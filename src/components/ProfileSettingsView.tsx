@@ -1294,7 +1294,7 @@ export default function ProfileSettingsView({
                 <div className="text-left">
                   <strong className="text-sm font-bold block">Privacy & Data Governance</strong>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono">
-                    DPDP Act 2023 compliant · Local AES encryption
+                    Your data, your rights · Delete account · Privacy Policy
                   </span>
                 </div>
               </div>
@@ -1441,7 +1441,7 @@ export default function ProfileSettingsView({
             ErMate v3.0 {isHOD ? "· PRO" : ""}
           </p>
           <p className="text-[9px] text-slate-500 leading-relaxed max-w-xs mx-auto">
-            HIPAA-Compliant • Certified ATLS Protocol Engine • End-to-end encrypted locally in India.
+            Data stored in Mumbai, India · Encrypted in transit and at rest
           </p>
         </div>
       </div>
@@ -1545,8 +1545,8 @@ export default function ProfileSettingsView({
             </div>
             <div className="p-3.5 bg-white border border-slate-200 rounded-xl text-left space-y-1 shadow-xs">
               <span className="text-[9px] text-slate-450 uppercase font-bold">Registry Locks</span>
-              <p className="text-xs font-bold text-slate-800">Standard HIPAA</p>
-              <span className="text-[9px] text-indigo-600 font-bold block">● Encryption Active</span>
+              <p className="text-xs font-bold text-slate-800">Encrypted storage</p>
+              <span className="text-[9px] text-indigo-600 font-bold block">● Encrypted in transit and at rest</span>
             </div>
           </div>
 
@@ -2194,9 +2194,9 @@ export default function ProfileSettingsView({
       content = (
         <div className="space-y-4 font-mono text-left">
           <div className="p-4 bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-2xl space-y-1">
-            <h4 className="text-xs font-black uppercase text-purple-700 dark:text-purple-400">DPDP Act 2023 & Compliance</h4>
+            <h4 className="text-xs font-black uppercase text-purple-700 dark:text-purple-400">Data protection (DPDP Act 2023)</h4>
             <p className="text-xs text-slate-600 dark:text-slate-300">
-              Zero-PHI transmission to overseas inference endpoints. Calendar dates converted to relative clinical timeline anchors.
+              Clinical text is automatically de-identified (patient identifiers removed by pattern matching, calendar dates turned into relative days) before it is sent to AI providers outside India. Automatic removal reduces, but cannot guarantee, that no identifying detail remains. Voice recordings go to Sarvam AI as recorded, so avoid saying patient names. See the Privacy Policy for details.
             </p>
           </div>
 
@@ -2264,7 +2264,6 @@ export default function ProfileSettingsView({
           <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-3 text-xs">
             <strong className="text-slate-900 dark:text-white block font-bold">24/7 Clinical Hotline</strong>
             <p className="text-slate-400">Email: support@ermate.in</p>
-            <p className="text-slate-400">Emergency Operations: +91 98765 43210</p>
           </div>
         </div>
       );
@@ -2275,8 +2274,8 @@ export default function ProfileSettingsView({
           <div className="bg-white dark:bg-[#182333] border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-2">
             <strong className="text-slate-900 dark:text-white block font-bold">ErMate Clinical OS v3.0</strong>
             <p className="text-slate-400">• Certified ATLS Protocol Engine</p>
-            <p className="text-slate-400">• DPDP Act 2023 Server-Side De-identification</p>
-            <p className="text-slate-400">• Local AES Encrypted Persistence</p>
+            <p className="text-slate-400">• Automatic de-identification before AI processing</p>
+            <p className="text-slate-400">• Data stored in Mumbai, India</p>
             <p className="text-slate-400">• Monotonic 9-digit Case Identity Counter</p>
           </div>
         </div>

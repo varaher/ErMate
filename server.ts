@@ -2198,9 +2198,10 @@ app.get("/api/learning/rules", requireAuth, requirePlatformAdmin, async (req: Au
 // 3. Extract Generalizable Patterns from Pending Corrections (Offline Pass)
 app.post("/api/learning/extract-rules", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
-    const result = await extractPatternsFromUnprocessedFeedback(process.env.GEMINI_API_KEY);
+    const result = await extractPatternsFromUnprocessedFeedback();
     return res.json({
       success: true,
+      status: result.status,
       processedCount: result.processedCount,
       newRules: result.newRules,
       rules: getAllLearnedRules()
@@ -2214,12 +2215,16 @@ app.post("/api/learning/extract-rules", requireAuth, requirePlatformAdmin, async
 // 4. Review Queue Approval / Rejection / Toggle
 app.post("/api/learning/rules/review", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
-    const { ruleId, approved, active, approvedBy } = req.body;
+    // Reviewer identity comes from the verified token only; any name in the body is ignored.
+    const { ruleId, approved, active } = req.body;
     if (!ruleId) {
       return res.status(400).json({ success: false, error: "ruleId is required." });
     }
 
-    const updated = updateRuleStatus(ruleId, Boolean(approved), Boolean(active), approvedBy || "Dr. Neeraj");
+    const updated = updateRuleStatus(ruleId, Boolean(approved), Boolean(active), {
+      email: String(req.user?.email || "").trim().toLowerCase(),
+      uid: String(req.user?.uid || "")
+    });
     if (!updated) {
       return res.status(404).json({ success: false, error: "Rule not found." });
     }
@@ -2233,7 +2238,7 @@ app.post("/api/learning/rules/review", requireAuth, requirePlatformAdmin, async 
 // 5. Create Manual Clinician Rule
 app.post("/api/learning/rules/create", requireAuth, requirePlatformAdmin, async (req: AuthRequest, res) => {
   try {
-    const { ruleText, triggerKeywords, caseType, severity, createdBy } = req.body;
+    const { ruleText, triggerKeywords, caseType, severity } = req.body; // creator identity comes from the token
     if (!ruleText?.trim()) {
       return res.status(400).json({ success: false, error: "ruleText is required." });
     }
@@ -2243,7 +2248,7 @@ app.post("/api/learning/rules/create", requireAuth, requirePlatformAdmin, async 
       Array.isArray(triggerKeywords) ? triggerKeywords : [],
       caseType || "general",
       severity === "safety_critical" ? "safety_critical" : "quality",
-      createdBy || "Dr. Neeraj"
+      { email: String(req.user?.email || "").trim().toLowerCase(), uid: String(req.user?.uid || "") }
     );
 
     return res.json({ success: true, rule: created });

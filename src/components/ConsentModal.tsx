@@ -75,7 +75,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                       <strong className="font-extrabold text-[12px] block text-emerald-700 dark:text-emerald-400 uppercase tracking-wide font-mono mb-0.5">
                         First Completed Case Saved!
                       </strong>
-                      Your first case is saved. You can help ErMate improve for the next doctor, if you choose to.
+                      Your first case is saved. You can choose whether your de-identified data may be used to improve ErMate in future.
                     </div>
                   </div>
                 )}
@@ -88,10 +88,10 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                 {/* Typography */}
                 <div className="space-y-2">
                   <h2 className="text-xl md:text-2xl font-black text-slate-800 dark:text-white leading-tight font-sans tracking-tight">
-                    Help build Indian emergency medicine's clinical brain
+                    Help improve ErMate in future
                   </h2>
                   <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 font-sans font-medium px-2">
-                    Every case you document makes ErMate smarter for every Indian ER doctor after you
+                    ErMate does not train on your cases today. If you agree, you allow future use of de-identified data, and we will ask you again before anything starts.
                   </p>
                 </div>
 
@@ -104,10 +104,10 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                     </div>
                     <div>
                       <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wide font-mono">
-                        Local Speech Context
+                        Voice today
                       </h4>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5 font-sans">
-                        Your voice helps ErMate learn Indian medical speech — Malayalam, Hindi, Tamil, and how doctors actually talk
+                        Your dictation is turned into text for your case. Nothing is used today to train any speech model. If we later use recordings to improve Indian-language speech, we will ask you first.
                       </p>
                     </div>
                   </div>
@@ -122,7 +122,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                         Identity Protection
                       </h4>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5 font-sans">
-                        ErMate does not ask for patient names. Identifying details are removed automatically before learning use, but automatic removal cannot be guaranteed perfect, so please avoid entering identifiers.
+                        ErMate does not ask for patient names. Typed and transcribed text is masked automatically before it goes to AI providers, but voice recordings are sent unmasked and masking cannot be guaranteed perfect, so please avoid saying or entering identifiers.
                       </p>
                     </div>
                   </div>
@@ -170,7 +170,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                     onClick={() => handleConsentChoice(true)}
                     className="w-full py-3.5 px-4 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs md:text-sm rounded-2xl transition-all cursor-pointer shadow-lg shadow-emerald-500/15"
                   >
-                    {saving ? "Saving preference..." : "Yes — I'll help build ErMate"}
+                    {saving ? "Saving preference..." : "Yes — allow future improvement use"}
                   </button>
                   <button
                     type="button"
@@ -202,10 +202,10 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
 
                 <div className="space-y-1">
                   <h3 className="text-lg font-black text-slate-800 dark:text-white leading-tight font-sans">
-                    Data Learning Details
+                    How learning works
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-sans leading-relaxed">
-                    Transparent overview of how de-identified training metadata powers local models safely.
+                    What is collected today, and what we may do in future only with your consent.
                   </p>
                 </div>
 
@@ -215,14 +215,11 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                     <div className="p-4 bg-emerald-500/5 dark:bg-emerald-950/10 border border-emerald-500/10 dark:border-emerald-500/20 rounded-2xl">
                       <h4 className="text-[10.5px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider font-mono mb-2">
-                        ✔️ What ErMate Collects
+                        ✔️ Collected for learning today
                       </h4>
                       <ul className="space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300 list-disc pl-4 font-sans">
-                        <li>Your voice recordings</li>
-                        <li>The text transcript</li>
-                        <li>What fields were extracted</li>
-                        <li>Your corrections (if any)</li>
-                        <li>The clinical diagnosis</li>
+                        <li>Nothing. No recordings, transcripts, corrections or diagnoses are collected for training today.</li>
+                        <li>Your cases are stored for your own use only.</li>
                       </ul>
                     </div>
 
@@ -241,12 +238,12 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                   {/* How it's used */}
                   <div className="p-4 bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-2xl space-y-2">
                     <h4 className="text-[10.5px] font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider font-mono">
-                      How It's Used
+                      Possible future use (not active)
                     </h4>
                     <ul className="space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300 list-disc pl-4 font-sans">
-                      <li>To train ErMate's voice model to better understand Indian medical speech</li>
-                      <li>To build clinical pathways from real Indian ER cases</li>
-                      <li>To make differential diagnosis suggestions more accurate for Indian patient populations</li>
+                      <li>Improving how ErMate understands Indian medical speech</li>
+                      <li>Reducing repeated documentation errors, after a senior doctor reviews each proposed rule</li>
+                      <li>We will ask for your consent again, and say what is used, before any of this starts</li>
                     </ul>
                   </div>
 
@@ -290,7 +287,7 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                     onClick={() => setScreen("consent")}
                     className="w-full py-3 px-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-2xl transition-all cursor-pointer"
                   >
-                    Return to contribution choice
+                    Back
                   </button>
                 </div>
               </div>
@@ -308,10 +305,10 @@ export default function ConsentModal({ isOpen, profile, onConsent, onClose, isFi
                     Thank you, Dr. {profile.name.replace("Dr.", "").trim()}
                   </h3>
                   <p className="text-xs md:text-sm text-slate-600 dark:text-slate-300 font-sans leading-relaxed px-1">
-                    You're now part of building Indian emergency medicine's first clinical AI.
+                    Your choice is saved.
                   </p>
                   <p className="text-[11px] md:text-xs text-slate-500 dark:text-slate-400 font-sans leading-relaxed">
-                    Every case you document makes ErMate smarter for every ER doctor in India.
+                    ErMate does not use your data for training today. We will tell you and ask again before that changes.
                   </p>
                 </div>
 

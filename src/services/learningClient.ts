@@ -24,6 +24,9 @@ export interface LearnedRule {
   active: boolean;
   createdAt: string;
   approvedBy?: string;
+  approvedByUid?: string;
+  population?: 'adult' | 'paediatric';
+  builtIn?: boolean;
 }
 
 const LEARNING_CAPTURE_CLIENT_ENABLED = false;

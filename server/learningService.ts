@@ -1,4 +1,3 @@
-
 import Anthropic from "@anthropic-ai/sdk";
 import { deidentifyText } from "./deidentify.ts";
 let anthropicClient: Anthropic | null = null;
@@ -27,6 +26,8 @@ export interface FeedbackCorrection {
   processed?: boolean;
 }
 
+export type RulePopulation = 'adult' | 'paediatric';
+
 export interface LearnedRule {
   id: string;
   rule: string;
@@ -38,82 +39,38 @@ export interface LearnedRule {
   approved: boolean;
   active: boolean;
   createdAt: string;
+  /** Verified reviewer identity, taken from the authenticated token (never from the request body). */
   approvedBy?: string;
+  approvedByUid?: string;
+  /** If set, the rule is only ever used for this population; unknown population never matches it. */
+  population?: RulePopulation;
+  /** Shipped with the code, not learned from any clinician. */
+  builtIn?: boolean;
 }
 
 // In-memory ONLY — NOT persisted. Resets on every server restart/redeploy.
-// Firestore persistence is scoped (SCOPE-03) but not yet built. Do not
-// treat this as durable storage or claim otherwise in docs/comments.
-let feedbackCorrectionsStore: FeedbackCorrection[] = [
-  {
-    id: "corr_001",
-    field: "imaging_modality",
-    ai_output: "MRI Brain requested for syncope workup",
-    corrected_output: "CT Brain + C-Spine non-contrast",
-    source_context: "72y M syncope with collapse. CT Brain + C-Spine ordered in ER.",
-    corrected_by: "dr.varah@ermate.ai",
-    timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
-    case_type: "syncope_workup",
-    processed: true
-  },
-  {
-    id: "corr_002",
-    field: "imaging_modality",
-    ai_output: "MRI Brain",
-    corrected_output: "CT Brain non-contrast",
-    source_context: "Fall from height, head injury, CT Brain ordered immediately.",
-    corrected_by: "dr.ananya@ermate.ai",
-    timestamp: new Date(Date.now() - 3600000 * 12).toISOString(),
-    case_type: "trauma_head_injury",
-    processed: true
-  }
-];
+// Firestore persistence is not built yet. Do not treat this as durable storage.
+//
+// No simulated corrections and no fabricated approval records: until real,
+// consented capture exists this list stays empty.
+let feedbackCorrectionsStore: FeedbackCorrection[] = [];
 
+// One built-in documentation-fidelity rule. It is shipped with the code (builtIn),
+// has no reviewer record, and only preserves what the doctor dictated. It never
+// recommends CT over MRI or the reverse.
 let learnedRulesStore: LearnedRule[] = [
   {
-    id: "r_001",
-    rule: "When source text specifies 'CT Brain', 'CT C-Spine', or emergency head trauma/syncope, never substitute or output 'MRI Brain'. CT is the primary emergency imaging modality for trauma/syncope.",
-    trigger_keywords: ["CT Brain", "MRI Brain", "C-Spine", "head trauma", "syncope"],
-    case_type: "syncope_workup",
+    id: "builtin_investigation_fidelity",
+    rule: "Record every investigation exactly as it appears in the source text. Do not change CT to MRI or MRI to CT, and do not add an investigation that was not mentioned.",
+    trigger_keywords: ["CT", "MRI", "X-ray", "CXR", "ultrasound", "USG"],
+    case_type: "general",
     confidence: "high",
-    severity: "safety_critical",
-    supporting_examples: [
-      "AI output 'MRI Brain' corrected to 'CT Brain + C-Spine non-contrast'",
-      "AI output 'MRI Brain' corrected to 'CT Brain non-contrast'"
-    ],
-    approved: true,
-    active: true,
-    createdAt: new Date(Date.now() - 3600000 * 48).toISOString(),
-    approvedBy: "dr_neeraj"
-  },
-  {
-    id: "r_002",
-    rule: "For paediatric acute asthma presentations, do not recommend routine antibiotics (Azithromycin/Amoxicillin) unless there is clear documented fever with focal pulmonary consolidation on chest X-ray.",
-    trigger_keywords: ["asthma", "paediatric", "wheeze", "azithromycin", "antibiotic"],
-    case_type: "paediatric_asthma",
-    confidence: "high",
-    severity: "safety_critical",
-    supporting_examples: [
-      "Removed empirical Azithromycin from paediatric asthma management plan"
-    ],
-    approved: true,
-    active: true,
-    createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-    approvedBy: "dr_neeraj"
-  },
-  {
-    id: "r_003",
-    rule: "When documenting vitals in handover summary, preserve exact blood pressure readings (e.g. 142/88 mmHg) rather than rounding or categorizing as 'Mild Hypertension'.",
-    trigger_keywords: ["vitals", "BP", "blood pressure", "hypertension"],
-    case_type: "general_er",
-    confidence: "medium",
     severity: "quality",
-    supporting_examples: [
-      "Replaced 'Mild Hypertension' with exact 'BP 142/88 mmHg' in handover card"
-    ],
-    approved: false, // Pending review in queue
-    active: false,
-    createdAt: new Date().toISOString()
+    supporting_examples: [],
+    approved: true,
+    active: true,
+    createdAt: "2026-11-28T00:00:00.000Z",
+    builtIn: true
   }
 ];
 
@@ -173,15 +130,46 @@ export function recordFeedbackCorrection(
 }
 
 // 2. Pattern Extraction Pass (Offline LLM Processing)
-export async function extractPatternsFromUnprocessedFeedback(apiKey?: string): Promise<{ newRules: LearnedRule[]; processedCount: number }> {
+export type LlmCaller = (prompt: string) => Promise<string | null>;
+export type ExtractStatus = 'ok' | 'nothing_to_process' | 'llm_unavailable' | 'llm_failed' | 'no_pattern';
+
+async function callClaudeForRules(prompt: string): Promise<string | null> {
+  const anthropic = getAnthropic();
+  if (!anthropic) return null;
+  const msg = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 1500,
+    temperature: 0.0,
+    messages: [{ role: "user", content: prompt }]
+  });
+  return (msg.content[0] as any)?.text || "";
+}
+
+// Only 401 (bad key) and 402/credit-balance mean the key itself is the problem.
+function maybeTripBreaker(err: any) {
+  if (err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
+    anthropicDisabledUntilInLearning = Date.now() + 5 * 60 * 1000;
+  }
+}
+
+/**
+ * Turns pending corrections into PROPOSED rules (never active, never approved).
+ * If the model is unavailable, fails, or finds no generalizable pattern, NO rule is
+ * created: a one-off correction must never become a general clinical rule by fallback.
+ * Corrections are marked processed only after a valid answer (including an empty one).
+ */
+export async function extractPatternsFromUnprocessedFeedback(
+  opts: { llm?: LlmCaller } = {}
+): Promise<{ newRules: LearnedRule[]; processedCount: number; status: ExtractStatus }> {
   const unprocessed = feedbackCorrectionsStore.filter(c => !c.processed);
   if (unprocessed.length === 0) {
-    return { newRules: [], processedCount: 0 };
+    return { newRules: [], processedCount: 0, status: 'nothing_to_process' };
   }
 
   const prompt = `
 You are reviewing clinician corrections to AI-generated clinical documentation in ErMate Emergency System.
-For each correction below, determine if it reveals a GENERALIZABLE clinical rule or pattern (something likely to recur) or a ONE-OFF error.
+For each correction below, determine if it reveals a GENERALIZABLE documentation pattern (something likely to recur) or a ONE-OFF error.
+Only propose rules about how the AI should record what was dictated. Never propose treatment recommendations. If nothing generalizes, return [].
 
 Corrections Batch:
 ${JSON.stringify(unprocessed, null, 2)}
@@ -192,6 +180,7 @@ Return a JSON ARRAY of generalizable rules. Each object MUST strictly follow thi
     "rule": "Short, specific instruction for the AI generation model",
     "trigger_keywords": ["keyword1", "keyword2", "keyword3"],
     "case_type": "category e.g. syncope_workup, trauma, drug_dosing",
+    "population": "adult" | "paediatric" | omit if it applies to both,
     "confidence": "high" | "medium" | "low",
     "severity": "safety_critical" | "quality",
     "supporting_examples": ["Brief summary of original error and correction"]
@@ -201,115 +190,118 @@ Return a JSON ARRAY of generalizable rules. Each object MUST strictly follow thi
 Do NOT wrap output in markdown fences if possible, or return valid JSON inside \`\`\`json.
 `;
 
-  let extractedList: any[] = [];
-
-  // Primary Engine: Claude Sonnet (claude-3-5-sonnet-20241022) for high clinical precision and rule extraction
-  const anthropic = getAnthropic();
-  if (anthropic) {
-    try {
-      const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1500,
-        temperature: 0.0,
-        messages: [{ role: "user", content: prompt }]
-      });
-
-      const text = (msg.content[0] as any)?.text || "";
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        extractedList = JSON.parse(jsonMatch[0]);
-      }
-    } catch (err: any) {
-      console.warn("[Learning Pattern Extraction] Claude Sonnet unavailable or credit limit reached, using offline fallback extraction:", err?.message || err);
-      // FIX (Sept 2026): removed status 400 from the disable trigger,
-      // matching the same correction applied to callClaudeSonnetOnly in
-      // server.ts (Finding P). A 400 is commonly a malformed request or
-      // deprecated model name, not a billing/auth problem — it shouldn't
-      // silently disable this pipeline's use of Claude for 5 minutes.
-      // Only 401 (bad key) and 402/credit-balance (insufficient credit)
-      // genuinely indicate the key itself is the problem.
-      if (err?.status === 401 || err?.status === 402 || String(err?.message || "").includes("credit balance")) {
-        anthropicDisabledUntilInLearning = Date.now() + 5 * 60 * 1000; // 5-minute circuit breaker, matches ROUTE-07/13
-      }
-    }
+  let text: string | null;
+  try {
+    text = await (opts.llm || callClaudeForRules)(prompt);
+  } catch (err: any) {
+    console.warn("[Learning Pattern Extraction] model call failed; no rules created:", err?.message || err);
+    maybeTripBreaker(err);
+    return { newRules: [], processedCount: 0, status: 'llm_failed' };
   }
+  if (text === null) return { newRules: [], processedCount: 0, status: 'llm_unavailable' };
 
-  // Fallback pattern extraction if offline or no key
-  if (extractedList.length === 0) {
-    unprocessed.forEach(c => {
-      extractedList.push({
-        rule: `When generating field '${c.field}', strictly prefer '${c.corrected_output.slice(0, 100)}' over '${c.ai_output.slice(0, 100)}' when context includes '${c.source_context.slice(0, 60)}'.`,
-        trigger_keywords: [c.field, c.case_type || "general"],
-        case_type: c.case_type || "general",
-        confidence: "medium",
-        severity: c.field.includes("drug") || c.field.includes("dose") || c.field.includes("modality") ? "safety_critical" : "quality",
-        supporting_examples: [`Correction in ${c.field}: "${c.ai_output}" -> "${c.corrected_output}"`]
-      });
-    });
+  let extractedList: any[];
+  try {
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error("no JSON array in reply");
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) throw new Error("reply is not an array");
+    extractedList = parsed;
+  } catch (err: any) {
+    console.warn("[Learning Pattern Extraction] unreadable reply; no rules created:", err?.message || err);
+    return { newRules: [], processedCount: 0, status: 'llm_failed' };
   }
 
   const newRules: LearnedRule[] = [];
   extractedList.forEach((item, index) => {
+    const ruleText = typeof item?.rule === "string" ? item.rule.trim() : "";
+    const keywords = Array.isArray(item?.trigger_keywords)
+      ? item.trigger_keywords.filter((k: any) => typeof k === "string" && k.trim().length > 0).map((k: string) => k.trim())
+      : [];
+    // A rule with no text or no trigger keyword could never be matched to a case: drop it.
+    if (ruleText.length < 10 || ruleText.length > 600 || keywords.length === 0) return;
     const ruleObj: LearnedRule = {
       id: `r_${Date.now()}_${index}`,
-      rule: item.rule || "Extracted rule",
-      trigger_keywords: Array.isArray(item.trigger_keywords) ? item.trigger_keywords : ["clinical"],
+      rule: ruleText,
+      trigger_keywords: keywords,
       case_type: item.case_type || "general",
       confidence: item.confidence === "high" || item.confidence === "low" ? item.confidence : "medium",
       severity: item.severity === "safety_critical" ? "safety_critical" : "quality",
-      supporting_examples: Array.isArray(item.supporting_examples) ? item.supporting_examples : ["Clinician edit"],
+      supporting_examples: Array.isArray(item.supporting_examples) ? item.supporting_examples.map(String) : [],
       approved: false, // Requires clinician human sign-off!
       active: false,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(item.population === "adult" || item.population === "paediatric" ? { population: item.population as RulePopulation } : {})
     };
     learnedRulesStore.unshift(ruleObj);
     newRules.push(ruleObj);
   });
 
-  // Mark processed
   unprocessed.forEach(c => c.processed = true);
-
-  return { newRules, processedCount: unprocessed.length };
+  return { newRules, processedCount: unprocessed.length, status: newRules.length ? 'ok' : 'no_pattern' };
 }
 
 // 3. Retrieve Relevant Learned Rules at Generation Time
-export function getRelevantLearnedRules(sourceContext: string = "", caseType?: string, maxRules: number = 8): LearnedRule[] {
-  const activeRules = learnedRulesStore.filter(r => r.active && r.approved);
-  if (activeRules.length === 0) return [];
 
-  const lowerContext = (sourceContext || "").toLowerCase();
+/**
+ * Best-effort age group from the source text. Returns null when unsure, and unsure
+ * never matches a population-specific rule. Durations ("diabetes for 10 years") are
+ * deliberately not read as ages.
+ */
+export function inferPopulation(text: string = ""): RulePopulation | null {
+  const t = String(text || "");
+  const ageYears = (n: string) => (parseInt(n, 10) >= 18 ? 'adult' : 'paediatric') as RulePopulation;
+  let m = t.match(/\b(\d{1,3})\s*[- ]?\s*(?:days?|weeks?|wks?|months?|mos?)[- ]?old\b/i);
+  if (m) return 'paediatric';
+  m = t.match(/\b(\d{1,3})\s*[- ]?\s*(?:years?|yrs?)[- ]?old\b/i)
+    || t.match(/\b(\d{1,3})\s*(?:yo|y\/o|yom|yof)\b/i)
+    || t.match(/\b(\d{1,3})\s*(?:y|yrs?|years?)\s*[,\/]?\s*(?:m|f|male|female|man|woman|boy|girl)\b/i)
+    || t.match(/\bage[d:]?\s*(\d{1,3})\b/i);
+  if (m) return ageYears(m[1]);
+  if (/\b(?:neonate|newborn|infant|toddler|paediatric|pediatric)\b/i.test(t)) return 'paediatric';
+  return null;
+}
+
+function keywordHits(rule: LearnedRule, text: string): number {
+  let hits = 0;
+  for (const kw of rule.trigger_keywords) {
+    const k = (kw || "").trim();
+    if (!k) continue;
+    const re = new RegExp(`(?<![A-Za-z0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9])`, "i");
+    if (re.test(text)) hits++;
+  }
+  return hits;
+}
+
+/**
+ * A rule is considered ONLY if it is relevant to this case (a trigger keyword appears in the
+ * source text, or its case_type equals the requested one) and its population fits. Severity
+ * only ranks rules that already qualified; severity alone never qualifies a rule.
+ */
+export function getRelevantLearnedRules(
+  sourceContext: string = "",
+  caseType?: string,
+  maxRules: number = 8,
+  population?: RulePopulation | null
+): LearnedRule[] {
+  const text = sourceContext || "";
   const lowerCaseType = (caseType || "").toLowerCase();
+  const pop = population === undefined ? inferPopulation(text) : population;
 
-  // Score rules by relevance
-  const scored = activeRules.map(rule => {
-    let score = 0;
+  const scored: { rule: LearnedRule; score: number }[] = [];
+  for (const rule of learnedRulesStore) {
+    if (!rule.active || !rule.approved) continue;
+    if (rule.population && rule.population !== pop) continue;
 
-    // Safety-critical rules get automatic boost
-    if (rule.severity === 'safety_critical') {
-      score += 5;
-    }
+    let relevance = keywordHits(rule, text) * 3;
+    if (rule.case_type && lowerCaseType && rule.case_type.toLowerCase() === lowerCaseType) relevance += 10;
+    if (relevance <= 0) continue;
 
-    if (rule.case_type && lowerCaseType && rule.case_type.toLowerCase() === lowerCaseType) {
-      score += 10;
-    }
+    scored.push({ rule, score: relevance + (rule.severity === 'safety_critical' ? 5 : 0) });
+  }
 
-    rule.trigger_keywords.forEach(kw => {
-      if (kw && lowerContext.includes(kw.toLowerCase())) {
-        score += 3;
-      }
-    });
-
-    return { rule, score };
-  });
-
-  // Sort by score descending
   scored.sort((a, b) => b.score - a.score);
-
-  // Return top N rules with positive score or high severity
-  return scored
-    .filter(item => item.score > 0 || item.rule.severity === 'safety_critical')
-    .slice(0, maxRules)
-    .map(item => item.rule);
+  return scored.slice(0, maxRules).map(item => item.rule);
 }
 
 // 4. Format Rules into System Prompt Block
@@ -336,12 +328,21 @@ export function getAllLearnedRules(): LearnedRule[] {
   return learnedRulesStore;
 }
 
-export function updateRuleStatus(ruleId: string, approved: boolean, active: boolean, approvedBy?: string): LearnedRule | null {
+export interface Reviewer { email: string; uid: string }
+
+/** reviewer must come from the verified token, never from the request body. */
+export function updateRuleStatus(ruleId: string, approved: boolean, active: boolean, reviewer: Reviewer): LearnedRule | null {
   const rule = learnedRulesStore.find(r => r.id === ruleId);
   if (rule) {
     rule.approved = approved;
-    rule.active = active;
-    if (approvedBy) rule.approvedBy = approvedBy;
+    rule.active = approved && active; // an unapproved rule can never be active
+    if (approved) {
+      rule.approvedBy = reviewer.email;
+      rule.approvedByUid = reviewer.uid;
+    } else {
+      delete rule.approvedBy;
+      delete rule.approvedByUid;
+    }
     return rule;
   }
   return null;
@@ -352,7 +353,7 @@ export function createManualLearnedRule(
   triggerKeywords: string[],
   caseType: string,
   severity: 'safety_critical' | 'quality',
-  createdBy: string = "Dr. Neeraj"
+  creator: Reviewer
 ): LearnedRule {
   const newRule: LearnedRule = {
     id: `r_${Date.now()}`,
@@ -361,11 +362,12 @@ export function createManualLearnedRule(
     case_type: caseType || "general",
     confidence: "high",
     severity: severity || "quality",
-    supporting_examples: [`Directly authored by ${createdBy}`],
+    supporting_examples: [`Directly authored by ${creator.email}`],
     approved: true, // Manual admin creation is auto-approved
     active: true,
     createdAt: new Date().toISOString(),
-    approvedBy: createdBy
+    approvedBy: creator.email,
+    approvedByUid: creator.uid
   };
   learnedRulesStore.unshift(newRule);
   return newRule;
